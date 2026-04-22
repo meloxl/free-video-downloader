@@ -1,0 +1,12 @@
+/* MVP styling complements Tailwind. Keep minimal. */
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* Better text rendering on macOS */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
