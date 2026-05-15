@@ -14,6 +14,14 @@ const jobGrid = document.getElementById("jobGrid");
 const emptyState = document.getElementById("emptyState");
 const jobForm = document.getElementById("jobForm");
 const urlsInput = document.getElementById("urls");
+const summaryTemplateInput = document.getElementById("summaryTemplate");
+const summaryPanel = document.getElementById("summaryPanel");
+const summaryPanelTitle = document.getElementById("summaryPanelTitle");
+const summaryContent = document.getElementById("summaryContent");
+const summaryExportBtn = document.getElementById("summaryExportBtn");
+const summaryExportDocxBtn = document.getElementById("summaryExportDocxBtn");
+const transcriptExportBtn = document.getElementById("transcriptExportBtn");
+const summaryCopyBtn = document.getElementById("summaryCopyBtn");
 
 const jobs = new Map();
 
@@ -26,6 +34,16 @@ function formatPct(p) {
   if (p == null || Number.isNaN(p)) return "—";
   const v = Math.max(0, Math.min(100, p));
   return `${v.toFixed(1)}%`;
+}
+
+function summaryStatusText(s) {
+  if (s === "queued") return "总结排队中";
+  if (s === "transcribing") return "字幕提取中";
+  if (s === "summarizing") return "AI 总结中";
+  if (s === "done") return "总结已完成";
+  if (s === "failed") return "总结失败";
+  if (s === "skipped") return "未启用总结";
+  return "等待总结";
 }
 
 function card(job) {
@@ -67,8 +85,86 @@ function card(job) {
     onclick: () => navigator.clipboard?.writeText(job.url || ""),
   }, [el("span", { text: "复制链接" })]);
 
+  const summaryBtn = el("button", {
+    class: "hidden rounded-xl px-3 py-2 text-sm font-semibold text-brand-700 hover:bg-brand-50 ring-1 ring-brand-200",
+    type: "button",
+    onclick: async () => {
+      try {
+        const res = await fetch(`/api/jobs/${job.id}/summary`);
+        if (!res.ok) throw new Error("总结尚未就绪");
+        const data = await res.json();
+        const s = data.summary_result || {};
+        const text = [
+          "【视频大纲】",
+          ...(s.outline || []).map((x, i) => `${i + 1}. ${x}`),
+          "",
+          "【核心要点】",
+          ...(s.key_points || []).map((x, i) => `${i + 1}. ${x}`),
+          "",
+          "【行动建议】",
+          ...(s.action_items || []).map((x, i) => `${i + 1}. ${x}`),
+          "",
+          "【关键词术语】",
+          ...(s.terms || []).map((x, i) => `${i + 1}. ${x}`),
+        ].join("\n");
+        if (summaryPanelTitle) summaryPanelTitle.textContent = "AI 总结结果";
+        if (summaryContent) summaryContent.textContent = text || "暂无总结内容";
+        if (summaryPanel) summaryPanel.classList.remove("hidden");
+        if (summaryExportBtn) {
+          summaryExportBtn.href = `/api/jobs/${job.id}/summary.md`;
+          summaryExportBtn.classList.remove("hidden");
+        }
+        if (summaryExportDocxBtn) {
+          summaryExportDocxBtn.href = `/api/jobs/${job.id}/summary.docx`;
+          summaryExportDocxBtn.classList.remove("hidden");
+        }
+        if (transcriptExportBtn) {
+          transcriptExportBtn.classList.add("hidden");
+        }
+      } catch (e) {
+        alert((e && e.message) ? e.message : "读取总结失败");
+      }
+    },
+  }, [el("span", { text: "查看总结" })]);
+
+  const transcriptBtn = el("button", {
+    class: "hidden rounded-xl px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50 ring-1 ring-indigo-200",
+    type: "button",
+    onclick: async () => {
+      try {
+        const res = await fetch(`/api/jobs/${job.id}/transcript`);
+        if (!res.ok) throw new Error("字幕尚未就绪");
+        const data = await res.json();
+        const t = data.transcript || {};
+        const text = [
+          `【来源】${t.source || "unknown"}`,
+          `【语言】${t.lang || "unknown"}`,
+          "",
+          t.text || "",
+        ].join("\n");
+        if (summaryPanelTitle) summaryPanelTitle.textContent = "字幕 / 转写内容";
+        if (summaryContent) summaryContent.textContent = text || "暂无字幕内容";
+        if (summaryPanel) summaryPanel.classList.remove("hidden");
+        if (transcriptExportBtn) {
+          transcriptExportBtn.href = `/api/jobs/${job.id}/transcript.txt`;
+          transcriptExportBtn.classList.remove("hidden");
+        }
+        if (summaryExportBtn) summaryExportBtn.classList.add("hidden");
+        if (summaryExportDocxBtn) summaryExportDocxBtn.classList.add("hidden");
+      } catch (e) {
+        alert((e && e.message) ? e.message : "读取字幕失败");
+      }
+    },
+  }, [el("span", { text: "查看字幕" })]);
+
+  const summaryState = el("div", { class: "mt-2 text-xs font-semibold text-slate-500", text: summaryStatusText(job.summary_status) });
+
   const err = el("div", { class: "mt-3 hidden text-xs font-semibold text-rose-600" });
+  const transcriptErr = el("div", { class: "mt-1 hidden text-xs font-semibold text-amber-600" });
+  const summaryErr = el("div", { class: "mt-1 hidden text-xs font-semibold text-rose-600" });
   btns.appendChild(downloadBtn);
+  btns.appendChild(summaryBtn);
+  btns.appendChild(transcriptBtn);
   btns.appendChild(detailBtn);
 
   const wrap = el("div", { class: "group rounded-3xl bg-white p-5 shadow-soft ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:shadow-lift" }, [
@@ -81,12 +177,20 @@ function card(job) {
     ]),
     progressOuter,
     metaLine,
+    summaryState,
+    transcriptErr,
+    summaryErr,
     err,
     btns,
   ]);
 
   wrap._progressInner = progressInner;
   wrap._downloadBtn = downloadBtn;
+  wrap._summaryBtn = summaryBtn;
+  wrap._transcriptBtn = transcriptBtn;
+  wrap._summaryState = summaryState;
+  wrap._transcriptErr = transcriptErr;
+  wrap._summaryErr = summaryErr;
   wrap._err = err;
   return wrap;
 }
@@ -111,11 +215,32 @@ function upsert(job) {
   data._node._downloadBtn.classList.toggle("hidden", !downloadVisible);
   data._node._downloadBtn.classList.toggle("inline-flex", downloadVisible);
 
+  const summaryDone = data.summary_status === "done";
+  data._node._summaryBtn.classList.toggle("hidden", !summaryDone);
+  data._node._summaryBtn.classList.toggle("inline-flex", summaryDone);
+  const transcriptReady = !!data.transcript_available;
+  data._node._transcriptBtn.classList.toggle("hidden", !transcriptReady);
+  data._node._transcriptBtn.classList.toggle("inline-flex", transcriptReady);
+  data._node._summaryState.textContent = summaryStatusText(data.summary_status);
+
   if (data.status === "failed") {
     data._node._err.textContent = data.error || "下载失败，请换一个链接或稍后重试";
     data._node._err.classList.remove("hidden");
   } else {
     data._node._err.classList.add("hidden");
+  }
+
+  if (data.transcript_error) {
+    data._node._transcriptErr.textContent = `字幕失败：${data.transcript_error}`;
+    data._node._transcriptErr.classList.remove("hidden");
+  } else {
+    data._node._transcriptErr.classList.add("hidden");
+  }
+  if (data.summary_error) {
+    data._node._summaryErr.textContent = `总结失败：${data.summary_error}`;
+    data._node._summaryErr.classList.remove("hidden");
+  } else {
+    data._node._summaryErr.classList.add("hidden");
   }
 
   setEmptyState();
@@ -130,6 +255,16 @@ function subscribe(jobId) {
         upsert({ id: jobId, progress: payload.progress, status: payload.progress.status });
       } else if (payload.type === "status") {
         upsert({ id: jobId, status: payload.status, error: payload.error, display_name: payload.display_name });
+      } else if (payload.type === "summary") {
+        upsert({
+          id: jobId,
+          summary_status: payload.summary_status,
+          summary_error: payload.summary_error,
+          transcript_error: payload.transcript_error,
+          summary_result: payload.summary_result,
+          // 只有在 summary_status 为 done 时 transcript 才真正可用
+          transcript_available: payload.summary_status === "done" && !payload.transcript_error,
+        });
       }
     } catch (e) {}
   };
@@ -142,9 +277,10 @@ function subscribe(jobId) {
   jobs.set(jobId, data);
 }
 
-async function createJobs(urls) {
+async function createJobs(urls, summaryTemplate) {
   const body = new FormData();
   body.set("urls", urls);
+  body.set("summary_template", summaryTemplate || "learning");
   const res = await fetch("/api/jobs", { method: "POST", body });
   if (!res.ok) {
     const msg = await res.text();
@@ -169,9 +305,19 @@ if (jobForm) {
     if (list.length === 0) return;
 
     try {
-      const payload = await createJobs(list.join("\n"));
+      const payload = await createJobs(list.join("\n"), summaryTemplateInput?.value || "learning");
       for (const j of payload.jobs || []) {
-        upsert({ id: j.id, url: j.url, status: j.status, progress: j.progress });
+        upsert({
+          id: j.id,
+          url: j.url,
+          status: j.status,
+          progress: j.progress,
+          summary_status: j.summary_status,
+          summary_error: j.summary_error,
+          transcript_error: j.transcript_error,
+          transcript_available: j.transcript_available,
+          meta: j.meta,
+        });
         subscribe(j.id);
       }
       urlsInput.value = "";
@@ -195,3 +341,10 @@ function clearFinished() {
 window.clearFinished = clearFinished;
 setEmptyState();
 
+if (summaryCopyBtn) {
+  summaryCopyBtn.addEventListener("click", async () => {
+    const text = summaryContent?.textContent || "";
+    if (!text.trim()) return;
+    await navigator.clipboard?.writeText(text);
+  });
+}

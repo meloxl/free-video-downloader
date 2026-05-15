@@ -18,6 +18,14 @@ class Settings(BaseSettings):
     download_root: str = Field(default="/tmp/fvd")
     cleanup_interval_seconds: int = Field(default=300, ge=30)
 
+    enable_ai_summary: bool = Field(default=True)
+    summary_only_bilibili: bool = Field(default=True)
+
+    deepseek_api_key: str = Field(default="")
+    deepseek_base_url: str = Field(default="https://api.deepseek.com")
+    deepseek_model: str = Field(default="deepseek-chat")
+
+    max_summary_workers: int = Field(default=2, ge=1, le=16)
+
 
 settings = Settings()
-

@@ -13,6 +13,16 @@ class JobStatus(str, Enum):
     expired = "expired"
 
 
+class SummaryStatus(str, Enum):
+    not_requested = "not_requested"
+    queued = "queued"
+    transcribing = "transcribing"
+    summarizing = "summarizing"
+    done = "done"
+    failed = "failed"
+    skipped = "skipped"
+
+
 @dataclass
 class JobProgress:
     status: JobStatus = JobStatus.queued
@@ -38,6 +48,9 @@ class Job:
     output_path: str | None = None
     display_name: str | None = None
     error: str | None = None
+    summary_status: SummaryStatus = SummaryStatus.not_requested
+    summary_error: str | None = None
+    transcript_error: str | None = None
+    summary_result: dict[str, Any] | None = None
 
     meta: dict[str, Any] = field(default_factory=dict)
-

@@ -157,7 +157,7 @@ def download_url(
         "quiet": False,
         "no_warnings": False,
         "ignoreerrors": False,
-        "socket_timeout": 30,
+        "socket_timeout": 60,
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Referer": referer,
@@ -173,8 +173,21 @@ def download_url(
     if cookies_path:
         ydl_opts["cookiefile"] = cookies_path
 
-    with YoutubeDL(ydl_opts) as ydl:
-        ydl.download([url])
+    max_retries = 3
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            break
+        except Exception as e:
+            last_error = e
+            if "Read timed out" in str(e) or "timeout" in str(e).lower():
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # 指数退避
+                    continue
+            raise RuntimeError(f"下载失败（已重试 {max_retries} 次）: {e}")
 
     output_path, display_name = _pick_final_file(job_dir)
     if not output_path or not display_name:

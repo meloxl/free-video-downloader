@@ -12,7 +12,7 @@ from typing import AsyncIterator
 
 from fastapi import HTTPException
 
-from .models import Job, JobProgress, JobStatus
+from .models import Job, JobProgress, JobStatus, SummaryStatus
 from .settings import settings
 
 
@@ -27,7 +27,7 @@ class JobStore:
         self._lock = asyncio.Lock()
         self._active_by_ip: dict[str, set[str]] = defaultdict(set)
 
-    async def create_job(self, *, url: str, ip: str) -> Job:
+    async def create_job(self, *, url: str, ip: str, meta: dict | None = None) -> Job:
         async with self._lock:
             active = {jid for jid in self._active_by_ip[ip] if self._jobs.get(jid, None) and self._jobs[jid].status in {JobStatus.queued, JobStatus.downloading}}
             self._active_by_ip[ip] = active
@@ -43,6 +43,7 @@ class JobStore:
                 created_at=t,
                 updated_at=t,
                 expires_at=t + settings.ttl_seconds,
+                meta=meta or {},
             )
             self._jobs[job_id] = job
             self._events[job_id] = asyncio.Queue(maxsize=500)
@@ -92,6 +93,33 @@ class JobStore:
     async def mark_failed(self, job_id: str, *, error: str) -> None:
         await self.update_job(job_id, status=JobStatus.failed, error=error)
         await self.emit(job_id, {"type": "status", "status": JobStatus.failed.value, "error": error})
+
+    async def set_summary_status(
+        self,
+        job_id: str,
+        summary_status: SummaryStatus,
+        *,
+        summary_error: str | None = None,
+        transcript_error: str | None = None,
+        summary_result: dict | None = None,
+    ) -> None:
+        await self.update_job(
+            job_id,
+            summary_status=summary_status,
+            summary_error=summary_error,
+            transcript_error=transcript_error,
+            summary_result=summary_result,
+        )
+        await self.emit(
+            job_id,
+            {
+                "type": "summary",
+                "summary_status": summary_status.value,
+                "summary_error": summary_error,
+                "transcript_error": transcript_error,
+                "summary_result": summary_result,
+            },
+        )
 
     async def emit(self, job_id: str, event: dict) -> None:
         q = self._events.get(job_id)
@@ -159,4 +187,3 @@ def safe_filename(name: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in (" ", "-", "_", ".", "(", ")") else "_" for ch in name)
     cleaned = " ".join(cleaned.split()).strip()
     return cleaned[:180] or "video"
-
