@@ -27,5 +27,15 @@ class Settings(BaseSettings):
 
     max_summary_workers: int = Field(default=2, ge=1, le=16)
 
+    # Stripe billing (Pro subscription)
+    public_base_url: str = Field(default="http://localhost:8000")
+    billing_db_path: str = Field(default="/tmp/fvd/billing.db")
+    stripe_secret_key: str = Field(default="")
+    stripe_webhook_secret: str = Field(default="")
+    stripe_price_monthly: str = Field(default="")
+    stripe_price_yearly: str = Field(default="")
+    stripe_demo_mode: bool = Field(default=False)
+    pro_max_active_jobs_per_ip: int = Field(default=10, ge=1, le=100)
+
 
 settings = Settings()

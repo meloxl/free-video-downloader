@@ -58,10 +58,11 @@
             class="hidden rounded-xl px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 md:inline-flex"
           >升级权益</a>
           <button
+            id="headerProBtn"
             class="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-3 py-2 text-sm font-semibold text-white shadow-soft hover:bg-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-500/40"
             onclick="openUpsell()"
           >
-            <span>开通 Pro</span>
+            <span id="headerProLabel">开通 Pro</span>
             <span class="rounded-lg bg-white/15 px-2 py-0.5 text-xs">更快更稳</span>
           </button>
           <div class="h-9 w-9 overflow-hidden rounded-full bg-slate-200 ring-1 ring-slate-300">
@@ -109,7 +110,7 @@
           </div>
         </div>
         <div class="mt-6 text-xs text-slate-500">
-          Pro（规划中）：更高并发、格式选择、字幕翻译、视频总结与团队配额。
+          Pro：更高并发、全平台 AI 总结（USD 订阅）。
         </div>
       </div>
     </aside>
@@ -134,8 +135,8 @@
               <div class="mt-1 text-sm text-slate-600">队列更快出结果，适合批量链接。</div>
             </div>
             <div class="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
-              <div class="text-sm font-semibold text-slate-900">格式选择</div>
-              <div class="mt-1 text-sm text-slate-600">1080p/音频/字幕一键选。</div>
+              <div class="text-sm font-semibold text-slate-900">全平台总结</div>
+              <div class="mt-1 text-sm text-slate-600">非 B 站链接也可启用 AI 视频总结。</div>
             </div>
             <div class="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
               <div class="text-sm font-semibold text-slate-900">安全护栏</div>
@@ -146,9 +147,25 @@
               <div class="mt-1 text-sm text-slate-600">手机上也能更顺滑地保存。</div>
             </div>
           </div>
-          <div class="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-            <button class="rounded-xl px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100" onclick="closeUpsell()">稍后再说</button>
-            <button class="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-brand-600" onclick="closeUpsell()">我知道了（MVP 暂不接入支付）</button>
+          <div id="upsellProActive" class="mt-5 hidden rounded-2xl bg-emerald-50 p-4 text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200">
+            你已是 Pro 会员，感谢支持！
+          </div>
+          <div id="upsellCheckout" class="mt-6 flex flex-col gap-3">
+            <p class="text-xs text-slate-500">订阅币种 USD，由 Stripe 安全托管支付页面完成。</p>
+            <div class="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button class="rounded-xl px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100" onclick="closeUpsell()">稍后再说</button>
+              <button
+                id="checkoutMonthlyBtn"
+                class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                onclick="startCheckout('monthly')"
+              >月付订阅</button>
+              <button
+                id="checkoutYearlyBtn"
+                class="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-brand-600"
+                onclick="startCheckout('yearly')"
+              >年付订阅</button>
+            </div>
+            <p id="checkoutError" class="hidden text-xs text-rose-600"></p>
           </div>
         </div>
       </div>
@@ -177,6 +194,51 @@
         document.getElementById("upsell").classList.add("hidden");
         document.getElementById("upsell").classList.remove("flex");
       }
+
+      let billingState = { is_pro: false };
+
+      async function refreshBillingStatus() {
+        try {
+          const res = await fetch("/api/billing/me");
+          if (!res.ok) return;
+          billingState = await res.json();
+          const pro = !!billingState.is_pro;
+          const label = document.getElementById("headerProLabel");
+          const btn = document.getElementById("headerProBtn");
+          if (label) label.textContent = pro ? "Pro 会员" : "开通 Pro";
+          if (btn && pro) btn.classList.add("ring-2", "ring-emerald-400/60");
+          const active = document.getElementById("upsellProActive");
+          const checkout = document.getElementById("upsellCheckout");
+          if (active) active.classList.toggle("hidden", !pro);
+          if (checkout) checkout.classList.toggle("hidden", pro);
+        } catch (_) {}
+      }
+
+      async function startCheckout(plan) {
+        const errEl = document.getElementById("checkoutError");
+        if (errEl) {
+          errEl.classList.add("hidden");
+          errEl.textContent = "";
+        }
+        const idem = `checkout_${plan}_${Date.now()}`;
+        try {
+          const res = await fetch("/api/billing/checkout-session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ plan, idempotency_key: idem }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || "创建支付会话失败");
+          if (data.url) window.location.href = data.url;
+        } catch (e) {
+          if (errEl) {
+            errEl.textContent = e.message || "支付跳转失败";
+            errEl.classList.remove("hidden");
+          }
+        }
+      }
+
+      document.addEventListener("DOMContentLoaded", refreshBillingStatus);
     </script>
     {% block scripts %}{% endblock %}
   </body>

@@ -88,13 +88,15 @@
       </div>
 
       <div class="rounded-3xl bg-white p-6 shadow-soft ring-1 ring-slate-200">
-        <div class="text-sm font-extrabold text-ink-950">Pro（规划中）</div>
+        <div class="text-sm font-extrabold text-ink-950">Pro 会员</div>
         <div class="mt-2 text-sm text-slate-600">
-          适合需要更高并发与更稳定下载的同学：格式选择、字幕翻译、视频总结、团队配额。
+          更高并发下载 + 全平台 AI 总结。USD 月付/年付订阅，Stripe 安全支付。
         </div>
         <div class="mt-4 flex items-center gap-2">
-          <button class="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600" type="button" onclick="openUpsell()">看看权益</button>
-          <div class="text-xs text-slate-500">MVP 阶段先把“下载体验”做到极致</div>
+          <button class="rounded-xl bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600" type="button" onclick="openUpsell()">
+            {% if billing and billing.is_pro %}已是 Pro{% else %}开通 Pro{% endif %}
+          </button>
+          <div class="text-xs text-slate-500">测试环境请用 Stripe Test Mode</div>
         </div>
       </div>
     </div>

@@ -5,17 +5,20 @@ import json
 import os
 import shutil
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import orjson
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, Field
 
+from .billing import BillingService
 from .douyin import is_douyin_url
 from .jobs import JobStore, ensure_job_dir
 from .models import JobProgress, JobStatus, SummaryStatus
@@ -32,8 +35,11 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 job_store = JobStore()
+billing_service = BillingService()
 executor = ThreadPoolExecutor(max_workers=6)
 summary_semaphore = asyncio.Semaphore(settings.max_summary_workers)
+
+DEVICE_COOKIE = "fvd_uid"
 
 
 def _client_ip(req: Request) -> str:
@@ -41,11 +47,35 @@ def _client_ip(req: Request) -> str:
     return req.client.host if req.client else "unknown"
 
 
+def _device_id(request: Request) -> str:
+    return getattr(request.state, "device_id", "")
+
+
 def _require_admin(x_admin_token: str | None) -> None:
     if not settings.admin_token:
         raise HTTPException(status_code=403, detail="Admin token not configured")
     if not x_admin_token or x_admin_token != settings.admin_token:
         raise HTTPException(status_code=403, detail="Invalid admin token")
+
+
+@app.middleware("http")
+async def _device_cookie_middleware(request: Request, call_next):
+    device_id = request.cookies.get(DEVICE_COOKIE)
+    set_cookie = False
+    if not device_id:
+        device_id = uuid.uuid4().hex
+        set_cookie = True
+    request.state.device_id = device_id
+    response = await call_next(request)
+    if set_cookie:
+        response.set_cookie(
+            DEVICE_COOKIE,
+            device_id,
+            httponly=True,
+            samesite="lax",
+            max_age=365 * 24 * 3600,
+        )
+    return response
 
 
 @app.on_event("startup")
@@ -56,6 +86,7 @@ async def _startup() -> None:
             "Please inject it via environment variable."
         )
 
+    billing_service.init()
     app.state.loop = asyncio.get_running_loop()
 
     async def cleaner() -> None:
@@ -70,7 +101,90 @@ async def _startup() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> Any:
-    return templates.TemplateResponse("index.html", {"request": request, "title": "万能视频下载 · 一键保存"})
+    billing = billing_service.get_billing_status(_device_id(request))
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "title": "万能视频下载 · 一键保存", "billing": billing},
+    )
+
+
+class CheckoutBody(BaseModel):
+    plan: Literal["monthly", "yearly"] = Field(default="monthly")
+    idempotency_key: str | None = None
+
+
+@app.get("/api/billing/me")
+async def billing_me(request: Request) -> Any:
+    return billing_service.get_billing_status(_device_id(request))
+
+
+@app.post("/api/billing/checkout-session")
+async def create_checkout_session(request: Request, body: CheckoutBody) -> Any:
+    device_id = _device_id(request)
+    try:
+        result = billing_service.create_checkout_session(
+            device_id=device_id,
+            plan=body.plan,
+            idempotency_key=body.idempotency_key,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return result
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request) -> Response:
+    payload = await request.body()
+    sig = request.headers.get("Stripe-Signature")
+    try:
+        billing_service.handle_webhook(payload, sig)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return Response(status_code=200)
+
+
+@app.get("/billing/success", response_class=HTMLResponse)
+async def billing_success(request: Request, session_id: str | None = None) -> Any:
+    device_id = _device_id(request)
+    verified: dict[str, Any] = {"ok": False}
+    if session_id:
+        try:
+            verified = billing_service.verify_checkout_session(session_id, device_id)
+        except Exception:
+            verified = {"ok": billing_service.is_pro(device_id), "session_id": session_id}
+    billing = billing_service.get_billing_status(device_id)
+    return templates.TemplateResponse(
+        "billing_success.html",
+        {
+            "request": request,
+            "title": "开通成功 · Pro",
+            "billing": billing,
+            "session_id": session_id,
+            "verified": verified,
+        },
+    )
+
+
+@app.get("/billing/cancel", response_class=HTMLResponse)
+async def billing_cancel(request: Request) -> Any:
+    return templates.TemplateResponse(
+        "billing_cancel.html",
+        {"request": request, "title": "已取消支付"},
+    )
+
+
+@app.get("/billing/demo-checkout", response_class=HTMLResponse)
+async def billing_demo_checkout(request: Request, plan: str = "monthly") -> Any:
+    if not settings.stripe_demo_mode:
+        raise HTTPException(status_code=404, detail="Not found")
+    device_id = _device_id(request)
+    normalized: Literal["monthly", "yearly"] = "yearly" if plan == "yearly" else "monthly"
+    billing_service.activate_demo_subscription(device_id, plan=normalized)
+    return RedirectResponse(url="/billing/success?session_id=demo_ok", status_code=303)
 
 
 def _parse_urls(raw: str) -> list[str]:
@@ -305,9 +419,11 @@ async def create_jobs(
     if len(url_list) > settings.max_urls_per_request:
         raise HTTPException(status_code=400, detail=f"Too many URLs (max {settings.max_urls_per_request})")
 
-    # Best-effort extra guard (JobStore also enforces)
+    ent = billing_service.get_entitlements(_device_id(request))
+    max_active = ent["max_active_jobs_per_ip"]
+
     active = await job_store.count_active_for_ip(ip)
-    if active >= settings.max_active_jobs_per_ip:
+    if active >= max_active:
         raise HTTPException(status_code=429, detail="Too many active downloads for this IP")
 
     cookies_path: Optional[str] = None
@@ -320,13 +436,14 @@ async def create_jobs(
     summary_template = _normalize_summary_template(summary_template)
     for u in url_list:
         enable_summary = settings.enable_ai_summary and (
-            (not settings.summary_only_bilibili) or is_bilibili_url(u)
+            ent["summary_all_platforms"] or is_bilibili_url(u)
         )
         initial_summary_status = SummaryStatus.queued if enable_summary else SummaryStatus.skipped
         job = await job_store.create_job(
             url=u,
             ip=ip,
             meta={"enable_summary": enable_summary, "summary_template": summary_template},
+            max_active_jobs_per_ip=max_active,
         )
         await job_store.update_job(job.id, summary_status=initial_summary_status)
         jobs.append(job)

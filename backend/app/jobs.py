@@ -27,11 +27,19 @@ class JobStore:
         self._lock = asyncio.Lock()
         self._active_by_ip: dict[str, set[str]] = defaultdict(set)
 
-    async def create_job(self, *, url: str, ip: str, meta: dict | None = None) -> Job:
+    async def create_job(
+        self,
+        *,
+        url: str,
+        ip: str,
+        meta: dict | None = None,
+        max_active_jobs_per_ip: int | None = None,
+    ) -> Job:
+        limit = max_active_jobs_per_ip if max_active_jobs_per_ip is not None else settings.max_active_jobs_per_ip
         async with self._lock:
             active = {jid for jid in self._active_by_ip[ip] if self._jobs.get(jid, None) and self._jobs[jid].status in {JobStatus.queued, JobStatus.downloading}}
             self._active_by_ip[ip] = active
-            if len(active) >= settings.max_active_jobs_per_ip:
+            if len(active) >= limit:
                 raise HTTPException(status_code=429, detail="Too many active downloads for this IP")
 
             job_id = uuid.uuid4().hex

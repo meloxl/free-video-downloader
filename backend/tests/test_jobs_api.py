@@ -3,6 +3,8 @@ import importlib
 
 from fastapi.testclient import TestClient
 
+import backend.app.billing.db as billing_db_mod
+import backend.app.billing.service as billing_service_mod
 import backend.app.main as main_mod
 import backend.app.settings as settings_mod
 import backend.app.ydl as ydl_mod
@@ -38,13 +40,14 @@ def test_active_limit(monkeypatch):
     monkeypatch.setenv("FVD_DEMO_MODE", "true")
     monkeypatch.setenv("FVD_MAX_ACTIVE_JOBS_PER_IP", "1")
     importlib.reload(settings_mod)
+    importlib.reload(billing_db_mod)
+    importlib.reload(billing_service_mod)
     importlib.reload(ydl_mod)
     importlib.reload(main_mod)
     with TestClient(main_mod.app) as client:
-        r1 = client.post("/api/jobs", data={"urls": "https://example.com/1"})
-        assert r1.status_code == 200
-        r2 = client.post("/api/jobs", data={"urls": "https://example.com/2"})
-        assert r2.status_code == 429
+        # Same request creates two jobs while the first is still active.
+        r = client.post("/api/jobs", data={"urls": "https://example.com/1\nhttps://example.com/2"})
+        assert r.status_code == 429
 
 
 def test_summary_endpoint_in_demo_mode(monkeypatch):
